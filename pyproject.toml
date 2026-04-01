@@ -7,7 +7,7 @@ dependencies = [
   "numpy>=1.26.0",
   "opencv-python>=4.10.0",
   "ultralytics>=8.3.0",
-  "mediapipe>=0.10.14",
+  "mediapipe==0.10.9",
   "transformers>=4.44.0",
   "torch>=2.2.0",
   "pillow>=10.4.0"
