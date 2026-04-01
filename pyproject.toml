@@ -1,0 +1,17 @@
+[project]
+name = "gennady-object-learning-model"
+version = "0.1.0"
+description = "Модульный CV-конвейер: detection, pose, parsing, tracking, rendering"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=1.26.0",
+  "opencv-python>=4.10.0",
+  "ultralytics>=8.3.0",
+  "mediapipe>=0.10.14",
+  "transformers>=4.44.0",
+  "torch>=2.2.0",
+  "pillow>=10.4.0"
+]
+
+[tool.uv]
+package = true
