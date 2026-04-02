@@ -10,6 +10,7 @@ from src.config.settings import AppConfig
 from src.implementations.detection.mock_detector import MockDetector
 from src.implementations.detection.yolo_detector import YOLODetector
 from src.implementations.parsing.mock_parser import MockParser
+from src.implementations.parsing.sam2_anatomy_parser import SAM2AnatomyParser
 from src.implementations.parsing.segformer_parser import SegFormerParser
 from src.implementations.pose.mediapipe_holistic_adapter import MediapipeHolisticAdapter
 from src.implementations.pose.mock_pose import MockPoseExtractor
@@ -27,6 +28,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--parsing-interval", type=int, default=5)
     parser.add_argument("--device", type=str, choices=["cpu", "cuda"], default="cpu")
     parser.add_argument("--use-mock", action="store_true")
+    parser.add_argument("--parser-backend", type=str, choices=["segformer", "sam2"], default="segformer")
     return parser.parse_args()
 
 
@@ -37,6 +39,7 @@ def build_config(args: argparse.Namespace) -> AppConfig:
         parsing_interval=args.parsing_interval,
         device=args.device,
         use_mock=args.use_mock,
+        parser_backend=args.parser_backend,
         input_photo_dir=root / "input" / "photo",
         input_video_dir=root / "input" / "video",
         output_root=root / "output",
@@ -56,7 +59,7 @@ def main() -> None:
     else:
         detector = YOLODetector(device=config.device)
         pose_extractor = MediapipeHolisticAdapter()
-        parser = SegFormerParser(device=config.device)
+        parser = SAM2AnatomyParser() if config.parser_backend == "sam2" else SegFormerParser(device=config.device)
 
     orchestrator = PipelineOrchestrator(
         fast_pipeline=FastPipeline(detector=detector, pose_extractor=pose_extractor),

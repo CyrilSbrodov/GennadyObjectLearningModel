@@ -20,6 +20,38 @@ PARSING_LABELS: list[str] = [
     "shoes",
 ]
 
+PARSING_LABELS_V2: list[str] = [
+    "head",
+    "face",
+    "hair",
+    "neck",
+    "chest_left",
+    "chest_right",
+    "abdomen",
+    "pelvis",
+    "glute_left",
+    "glute_right",
+    "shoulder_left",
+    "shoulder_right",
+    "upper_arm_left",
+    "upper_arm_right",
+    "forearm_left",
+    "forearm_right",
+    "hand_left",
+    "hand_right",
+    "thigh_left",
+    "thigh_right",
+    "knee_left",
+    "knee_right",
+    "calf_left",
+    "calf_right",
+    "foot_left",
+    "foot_right",
+    "back_upper",
+    "back_lower",
+    "breast_areola",
+]
+
 
 @dataclass(slots=True)
 class Detection:
@@ -54,6 +86,8 @@ class ParsedHuman:
     masks: dict[str, np.ndarray]
     confidence: float
     model_version: str
+    schema_version: str = "v1"
+    label_confidence: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

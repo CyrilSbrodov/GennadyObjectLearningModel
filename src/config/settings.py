@@ -11,6 +11,7 @@ class AppConfig:
     parsing_interval: int
     device: str
     use_mock: bool
+    parser_backend: str
     input_photo_dir: Path
     input_video_dir: Path
     output_root: Path
