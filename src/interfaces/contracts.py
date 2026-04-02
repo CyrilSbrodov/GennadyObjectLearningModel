@@ -54,6 +54,7 @@ class SceneBuilder(ABC):
         detections: list[Detection],
         poses: list[PoseResult],
         tracked: list[TrackedHuman],
+        frame_index: int = 0,
     ) -> SceneFrame:
         """Собирает каноническое представление сцены."""
 

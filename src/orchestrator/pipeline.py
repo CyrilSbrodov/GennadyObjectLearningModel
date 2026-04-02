@@ -245,8 +245,7 @@ class PipelineOrchestrator:
 
         t2 = time.perf_counter()
         tracked = self.tracker.update(detections, poses, parsed)
-        scene = self.scene_builder.build(frame, detections, poses, tracked)
-        scene.frame_index = frame_idx
+        scene = self.scene_builder.build(frame, detections, poses, tracked, frame_index=frame_idx)
         if is_save:
             images = self.renderer.render(scene)
             self.writer.save(base_name=base_name, frame_idx=frame_idx, images=images)

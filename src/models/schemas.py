@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from src.representation.schemas import HumanRepresentation
 
 PARSING_LABELS: list[str] = [
     "face",
@@ -72,3 +76,4 @@ class SceneFrame:
     poses: list[PoseResult] = field(default_factory=list)
     tracked: list[TrackedHuman] = field(default_factory=list)
     parsing_by_detection: dict[int, ParsedHuman] = field(default_factory=dict)
+    human_representations: list["HumanRepresentation"] = field(default_factory=list)
