@@ -53,6 +53,7 @@ class SegmentationWorker:
         self._frame_cache: OrderedDict[FrameKey, list[ParsedHuman]] = OrderedDict()
         self._pending_keys: set[FrameKey] = set()
         self._max_cache_size = max(1, max_cache_size)
+        self._sentinel_key: FrameKey = ("", -1)
 
     def start(self) -> None:
         """Запускает поток заранее, чтобы прогрев и инференс не тормозили обработку кадров."""
@@ -64,31 +65,37 @@ class SegmentationWorker:
         if drain:
             self._queue.join()
         self._stop_event.set()
-        try:
-            self._queue.put_nowait(SegmentationTask(key=("", -1), frame=np.zeros((1, 1, 3), dtype=np.uint8), detections=[]))
-        except queue.Full:
-            pass
+        # Явно отправляем sentinel, чтобы поток завершился предсказуемо.
+        sentinel = SegmentationTask(key=self._sentinel_key, frame=np.zeros((1, 1, 3), dtype=np.uint8), detections=[])
+        while self._thread.is_alive():
+            try:
+                self._queue.put(sentinel, timeout=0.1)
+                break
+            except queue.Full:
+                continue
         if self._thread.is_alive():
             self._thread.join(timeout=2.0)
+        if self._thread.is_alive():
+            self.logger.warning("Медленный контур: воркер не завершился после таймаута остановки")
 
     def submit(self, key: FrameKey, frame: np.ndarray, detections: list[Detection]) -> bool:
         """Добавляет задачу в очередь без блокировки fast-контура."""
+        task = SegmentationTask(key=key, frame=frame.copy(), detections=list(detections))
         with self._lock:
             if key in self._frame_cache:
-                self.logger.info("Медленный контур: cache hit для %s, повторная постановка не нужна", key)
+                self.logger.debug("Медленный контур: cache hit для %s, повторная постановка не нужна", key)
                 self._frame_cache.move_to_end(key)
                 return False
             if key in self._pending_keys:
-                self.logger.info("Медленный контур: %s уже в очереди, повторная постановка пропущена", key)
+                self.logger.debug("Медленный контур: %s уже в очереди, повторная постановка пропущена", key)
                 return False
-
-        task = SegmentationTask(key=key, frame=frame.copy(), detections=list(detections))
+            self._pending_keys.add(key)
         try:
             self._queue.put_nowait(task)
-            with self._lock:
-                self._pending_keys.add(key)
             return True
         except queue.Full:
+            with self._lock:
+                self._pending_keys.discard(key)
             self.logger.warning("Медленный контур: очередь заполнена, задача %s отброшена", key)
             return False
 
@@ -99,32 +106,53 @@ class SegmentationWorker:
             if cached is None:
                 return None
             self._frame_cache.move_to_end(key)
-            self.logger.info("Медленный контур: cache hit для %s", key)
+            self.logger.debug("Медленный контур: cache hit для %s", key)
             return list(cached)
+
+    def wait_for_key(self, key: FrameKey, timeout_seconds: float | None = None) -> list[ParsedHuman] | None:
+        """Ждет результат для кадра, пока он в очереди/обработке."""
+        started = time.monotonic()
+        while True:
+            with self._lock:
+                cached = self._frame_cache.get(key)
+                if cached is not None:
+                    self._frame_cache.move_to_end(key)
+                    return list(cached)
+                is_pending = key in self._pending_keys
+            if not is_pending:
+                return None
+            if timeout_seconds is not None and time.monotonic() - started >= timeout_seconds:
+                return None
+            time.sleep(0.01)
 
     def _run(self) -> None:
         """Крутит цикл воркера отдельно, чтобы тяжелый инференс не блокировал главный поток."""
-        while not self._stop_event.is_set():
+        while True:
             task = self._queue.get()
-            if task.key[1] < 0:
+            try:
+                # Sentinel означает корректное завершение потока воркера.
+                if task.key == self._sentinel_key:
+                    break
+                started = time.perf_counter()
+                parsed = self.parser.parse(task.frame, task.detections)
+                elapsed = time.perf_counter() - started
+                with self._lock:
+                    self._frame_cache[task.key] = parsed
+                    self._frame_cache.move_to_end(task.key)
+                    while len(self._frame_cache) > self._max_cache_size:
+                        self._frame_cache.popitem(last=False)
+                self.logger.info(
+                    "Медленный контур: кадр %s сегментирован за %.3f c, людей=%d",
+                    task.key,
+                    elapsed,
+                    len(parsed),
+                )
+            except Exception:
+                self.logger.exception("Медленный контур: ошибка сегментации кадра %s", task.key)
+            finally:
+                with self._lock:
+                    self._pending_keys.discard(task.key)
                 self._queue.task_done()
-                continue
-            started = time.perf_counter()
-            parsed = self.parser.parse(task.frame, task.detections)
-            elapsed = time.perf_counter() - started
-            with self._lock:
-                self._pending_keys.discard(task.key)
-                self._frame_cache[task.key] = parsed
-                self._frame_cache.move_to_end(task.key)
-                while len(self._frame_cache) > self._max_cache_size:
-                    self._frame_cache.popitem(last=False)
-            self.logger.info(
-                "Медленный контур: кадр %s сегментирован за %.3f c, людей=%d",
-                task.key,
-                elapsed,
-                len(parsed),
-            )
-            self._queue.task_done()
 
 
 class PipelineOrchestrator:
@@ -152,7 +180,7 @@ class PipelineOrchestrator:
 
     def process_image(self, image: np.ndarray, base_name: str) -> None:
         """Обрабатывает изображение как единственный кадр."""
-        self._process_frame(image, base_name=base_name, frame_idx=0)
+        self._process_frame(image, base_name=base_name, frame_idx=0, wait_for_parse=True)
 
     def process_video(self, video_path: str, base_name: str) -> None:
         """Обрабатывает видео покадрово без ожидания медленного контура."""
@@ -170,7 +198,7 @@ class PipelineOrchestrator:
         """Закрывает воркер в режиме дренажа, чтобы завершить уже поставленные задачи."""
         self.segmentation_worker.stop(drain=True)
 
-    def _process_frame(self, frame: np.ndarray, base_name: str, frame_idx: int) -> None:
+    def _process_frame(self, frame: np.ndarray, base_name: str, frame_idx: int, wait_for_parse: bool = False) -> None:
         """Применяет быстрый контур и подмешивает кэш медленного контура при наличии."""
         started_at = time.perf_counter()
         detections, poses = self.fast_pipeline.run(frame)
@@ -178,10 +206,19 @@ class PipelineOrchestrator:
         frame_key = (base_name, frame_idx)
         parsed = self.segmentation_worker.get_cached_frame(frame_key)
         parse_requested = frame_idx % self.parsing_interval == 0
-        if parse_requested:
+        if parse_requested and parsed is None:
             enqueued = self.segmentation_worker.submit(key=frame_key, frame=frame, detections=detections)
             if enqueued:
                 self.logger.info("Медленный контур: кадр %s отправлен в очередь", frame_key)
+            if wait_for_parse:
+                waited = self.segmentation_worker.wait_for_key(frame_key, timeout_seconds=10.0)
+                if waited is not None:
+                    parsed = waited
+                else:
+                    self.logger.warning(
+                        "Медленный контур: парсинг не завершился вовремя для кадра %s",
+                        frame_key,
+                    )
 
         tracked = self.tracker.update(detections, poses, parsed)
         scene = self.scene_builder.build(frame, detections, poses, tracked)
@@ -192,7 +229,7 @@ class PipelineOrchestrator:
         elapsed = time.perf_counter() - started_at
         fps = 1.0 / elapsed if elapsed > 0 else 0.0
         self.logger.info(
-            "Быстрый контур: кадр %d обработан, detections=%d, cached_parsing=%s, fps=%.2f",
+            "Быстрый контур: кадр %d обработан, detections=%d, parsing_available=%s, fps=%.2f",
             frame_idx,
             len(detections),
             "yes" if parsed is not None else "no",
