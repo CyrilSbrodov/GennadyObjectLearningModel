@@ -8,6 +8,7 @@ from src.implementations.rendering.opencv_renderer import OpenCVRenderer
 from src.implementations.scene.basic_scene_builder import BasicSceneBuilder
 from src.models.schemas import Detection, ParsedHuman, PoseKeypoint, PoseResult, SceneFrame, TrackedHuman
 from src.representation.builder import HumanRepresentationBuilder
+from src.representation.parsing_adapters import create_adapter
 from src.representation.state_rules import build_person_mask
 
 
@@ -55,7 +56,79 @@ class RepresentationTests(unittest.TestCase):
         images = OpenCVRenderer().render(scene)
         self.assertIn("representation_overlay", images)
         self.assertIn("representation_masks", images)
+        self.assertIn("representation_masks_raw", images)
+        self.assertIn("representation_masks_normalized", images)
+        self.assertIn("representation_masks_garments", images)
+        self.assertIn("anatomy_raw_overlay", images)
         self.assertEqual(images["representation_overlay"].shape, self.frame.shape)
+
+    def test_builder_v2_schema_produces_coarse_and_fine_parts(self) -> None:
+        masks = {}
+        labels = [
+            "head",
+            "face",
+            "hair",
+            "neck",
+            "chest_left",
+            "chest_right",
+            "abdomen",
+            "pelvis",
+            "shoulder_left",
+            "shoulder_right",
+            "upper_arm_left",
+            "upper_arm_right",
+            "forearm_left",
+            "forearm_right",
+            "hand_left",
+            "hand_right",
+            "thigh_left",
+            "thigh_right",
+            "knee_left",
+            "knee_right",
+            "calf_left",
+            "calf_right",
+            "foot_left",
+            "foot_right",
+        ]
+        for label in labels:
+            masks[label] = np.zeros((120, 160), dtype=np.uint8)
+        masks["chest_left"][20:35, 20:45] = 1
+        masks["chest_right"][20:35, 45:70] = 1
+        masks["abdomen"][35:55, 20:70] = 1
+        masks["pelvis"][55:72, 20:70] = 1
+        masks["thigh_left"][72:102, 20:45] = 1
+        masks["thigh_right"][72:102, 45:70] = 1
+        masks["foot_left"][102:110, 20:35] = 1
+        masks["foot_right"][102:110, 55:70] = 1
+        masks["upper_arm_left"][30:52, 10:22] = 1
+        masks["upper_arm_right"][30:52, 70:82] = 1
+        masks["forearm_left"][52:70, 8:20] = 1
+        masks["forearm_right"][52:70, 72:84] = 1
+        masks["hand_left"][70:78, 7:18] = 1
+        masks["hand_right"][70:78, 74:85] = 1
+        masks["head"][10:20, 30:60] = 1
+        masks["face"][12:20, 35:55] = 1
+        masks["hair"][8:13, 33:57] = 1
+
+        parsing = ParsedHuman(
+            detection_idx=0,
+            masks=masks,
+            confidence=0.7,
+            model_version="sam2-anatomy-stub-v0",
+            schema_version="v2",
+        )
+        tracked = TrackedHuman(track_id=4, detection=self.det, pose=None, parsed=parsing)
+        representation = HumanRepresentationBuilder().build_for_tracked_human(tracked, frame=self.frame)
+        self.assertIn("torso", representation.body_parts)
+        self.assertIn("left_upper_arm", representation.body_parts)
+        self.assertIn("right_leg", representation.body_parts)
+        self.assertIn("head", representation.body_parts)
+        self.assertIn("head_core", representation.body_parts)
+        self.assertIn("human_4_garment_upper_inner_0", representation.garments)
+
+    def test_create_adapter_unknown_schema_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            create_adapter("abc")
 
     def test_summary_panel_render(self) -> None:
         scene = SceneFrame(frame_index=0, frame=self.frame, detections=[], poses=[], tracked=[])
