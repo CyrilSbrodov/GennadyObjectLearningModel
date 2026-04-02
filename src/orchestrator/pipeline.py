@@ -26,8 +26,18 @@ class FastPipeline:
 
     def run(self, frame: np.ndarray) -> tuple[list[Detection], list]:
         """Выполняет только те этапы, которые должны идти в реальном времени."""
+        t0 = time.perf_counter()
         detections = self.detector.detect(frame)
+        t1 = time.perf_counter()
         poses = self.pose_extractor.extract(frame, detections)
+        t2 = time.perf_counter()
+
+        logging.getLogger(self.__class__.__name__).info(
+            "FastPipeline: detect=%.3f c, pose=%.3f c, detections=%d",
+            t1 - t0,
+            t2 - t1,
+            len(detections),
+        )
         return detections, poses
 
 
@@ -180,37 +190,50 @@ class PipelineOrchestrator:
 
     def process_image(self, image: np.ndarray, base_name: str) -> None:
         """Обрабатывает изображение как единственный кадр."""
-        self._process_frame(image, base_name=base_name, frame_idx=0, wait_for_parse=True)
+        self._process_frame(image, base_name=base_name, frame_idx=0, wait_for_parse=True, is_save=False)
 
     def process_video(self, video_path: str, base_name: str) -> None:
         """Обрабатывает видео покадрово без ожидания медленного контура."""
+        t0 = time.perf_counter()
         capture = cv2.VideoCapture(video_path)
         frame_idx = 0
+        is_save = False
         while True:
             ok, frame = capture.read()
             if not ok:
                 break
-            self._process_frame(frame, base_name=base_name, frame_idx=frame_idx)
+            if frame_idx % 50 == 0:
+                is_save = True
+            self._process_frame(frame, base_name=base_name, frame_idx=frame_idx, is_save=is_save, wait_for_parse=is_save)
+            is_save = False
             frame_idx += 1
         capture.release()
+        t1 = time.perf_counter()
+        self.logger.info(
+            "Профиль видео %s: полная обработка=%.3f c",
+            frame_idx,
+            t1 - t0,
+        )
 
     def close(self) -> None:
         """Закрывает воркер в режиме дренажа, чтобы завершить уже поставленные задачи."""
         self.segmentation_worker.stop(drain=True)
 
-    def _process_frame(self, frame: np.ndarray, base_name: str, frame_idx: int, wait_for_parse: bool = False) -> None:
+    def _process_frame(self, frame: np.ndarray, base_name: str, frame_idx: int, is_save: bool, wait_for_parse: bool = False) -> None:
         """Применяет быстрый контур и подмешивает кэш медленного контура при наличии."""
         started_at = time.perf_counter()
+        t0 = time.perf_counter()
         detections, poses = self.fast_pipeline.run(frame)
+        t1 = time.perf_counter()
 
         frame_key = (base_name, frame_idx)
         parsed = self.segmentation_worker.get_cached_frame(frame_key)
-        parse_requested = frame_idx % self.parsing_interval == 0
+        parse_requested = (frame_idx % self.parsing_interval == 0) or is_save
         if parse_requested and parsed is None:
             enqueued = self.segmentation_worker.submit(key=frame_key, frame=frame, detections=detections)
             if enqueued:
                 self.logger.info("Медленный контур: кадр %s отправлен в очередь", frame_key)
-            if wait_for_parse:
+            if wait_for_parse or is_save:
                 waited = self.segmentation_worker.wait_for_key(frame_key, timeout_seconds=10.0)
                 if waited is not None:
                     parsed = waited
@@ -220,11 +243,22 @@ class PipelineOrchestrator:
                         frame_key,
                     )
 
+        t2 = time.perf_counter()
         tracked = self.tracker.update(detections, poses, parsed)
         scene = self.scene_builder.build(frame, detections, poses, tracked)
         scene.frame_index = frame_idx
-        images = self.renderer.render(scene)
-        self.writer.save(base_name=base_name, frame_idx=frame_idx, images=images)
+        if is_save:
+            images = self.renderer.render(scene)
+            self.writer.save(base_name=base_name, frame_idx=frame_idx, images=images)
+        t3 = time.perf_counter()
+
+        self.logger.info(
+            "Профиль кадра %s: fast=%.3f c, parse_wait/cache=%.3f c, build_render_save=%.3f c",
+            frame_key,
+            t1 - t0,
+            t2 - t1,
+            t3 - t2,
+        )
 
         elapsed = time.perf_counter() - started_at
         fps = 1.0 / elapsed if elapsed > 0 else 0.0
