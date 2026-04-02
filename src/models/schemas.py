@@ -52,6 +52,16 @@ PARSING_LABELS_V2: list[str] = [
     "breast_areola",
 ]
 
+PARSING_LABELS_SAM2: list[str] = [
+    "person_mask",
+    "head",
+    "torso",
+    "left_arm",
+    "right_arm",
+    "left_leg",
+    "right_leg",
+]
+
 
 @dataclass(slots=True)
 class Detection:
@@ -88,6 +98,7 @@ class ParsedHuman:
     model_version: str
     schema_version: str = "v1"
     label_confidence: dict[str, float] = field(default_factory=dict)
+    debug: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

@@ -12,7 +12,7 @@ import numpy as np
 
 from src.interfaces.contracts import Detector, HumanParser, PoseExtractor, Renderer, SceneBuilder, Tracker
 from src.io.output_writer import OutputWriter
-from src.models.schemas import Detection, ParsedHuman
+from src.models.schemas import Detection, ParsedHuman, PoseResult
 
 FrameKey = tuple[str, int]
 
@@ -48,6 +48,7 @@ class SegmentationTask:
     key: FrameKey
     frame: np.ndarray
     detections: list[Detection]
+    poses: list[PoseResult]
 
 
 class SegmentationWorker:
@@ -76,7 +77,12 @@ class SegmentationWorker:
             self._queue.join()
         self._stop_event.set()
         # Явно отправляем sentinel, чтобы поток завершился предсказуемо.
-        sentinel = SegmentationTask(key=self._sentinel_key, frame=np.zeros((1, 1, 3), dtype=np.uint8), detections=[])
+        sentinel = SegmentationTask(
+            key=self._sentinel_key,
+            frame=np.zeros((1, 1, 3), dtype=np.uint8),
+            detections=[],
+            poses=[],
+        )
         while self._thread.is_alive():
             try:
                 self._queue.put(sentinel, timeout=0.1)
@@ -88,9 +94,9 @@ class SegmentationWorker:
         if self._thread.is_alive():
             self.logger.warning("Медленный контур: воркер не завершился после таймаута остановки")
 
-    def submit(self, key: FrameKey, frame: np.ndarray, detections: list[Detection]) -> bool:
+    def submit(self, key: FrameKey, frame: np.ndarray, detections: list[Detection], poses: list[PoseResult]) -> bool:
         """Добавляет задачу в очередь без блокировки fast-контура."""
-        task = SegmentationTask(key=key, frame=frame.copy(), detections=list(detections))
+        task = SegmentationTask(key=key, frame=frame.copy(), detections=list(detections), poses=list(poses))
         with self._lock:
             if key in self._frame_cache:
                 self.logger.debug("Медленный контур: cache hit для %s, повторная постановка не нужна", key)
@@ -144,7 +150,7 @@ class SegmentationWorker:
                 if task.key == self._sentinel_key:
                     break
                 started = time.perf_counter()
-                parsed = self.parser.parse(task.frame, task.detections)
+                parsed = self.parser.parse(task.frame, task.detections, task.poses)
                 elapsed = time.perf_counter() - started
                 with self._lock:
                     self._frame_cache[task.key] = parsed
@@ -230,7 +236,7 @@ class PipelineOrchestrator:
         parsed = self.segmentation_worker.get_cached_frame(frame_key)
         parse_requested = (frame_idx % self.parsing_interval == 0) or is_save
         if parse_requested and parsed is None:
-            enqueued = self.segmentation_worker.submit(key=frame_key, frame=frame, detections=detections)
+            enqueued = self.segmentation_worker.submit(key=frame_key, frame=frame, detections=detections, poses=poses)
             if enqueued:
                 self.logger.info("Медленный контур: кадр %s отправлен в очередь", frame_key)
             if wait_for_parse or is_save:

@@ -4,7 +4,15 @@ import numpy as np
 
 from src.interfaces.contracts import Renderer
 from src.models.schemas import SceneFrame
-from src.visualization.drawing import draw_anatomy_raw_overlay, draw_combined, draw_detection, draw_parsing, draw_pose
+from src.visualization.drawing import (
+    draw_anatomy_raw_overlay,
+    draw_combined,
+    draw_detection,
+    draw_parsing,
+    draw_pose,
+    draw_sam2_prompt_debug,
+    draw_sam2_raw_mask,
+)
 from src.visualization.representation_drawing import (
     draw_representation_debug,
     draw_representation_masks_garments,
@@ -32,6 +40,8 @@ class OpenCVRenderer(Renderer):
         representation_masks_raw = draw_representation_masks_raw(scene)
         representation_masks_normalized = draw_representation_masks_normalized(scene)
         representation_masks_garments = draw_representation_masks_garments(scene)
+        sam2_raw_mask = draw_sam2_raw_mask(scene)
+        sam2_prompt_debug = draw_sam2_prompt_debug(scene)
         images = {
             "skeleton": skeleton,
             "parsing": parsing,
@@ -44,6 +54,8 @@ class OpenCVRenderer(Renderer):
             "representation_masks_raw": representation_masks_raw,
             "representation_masks_normalized": representation_masks_normalized,
             "representation_masks_garments": representation_masks_garments,
+            "sam2_raw_mask": sam2_raw_mask,
+            "sam2_prompt_debug": sam2_prompt_debug,
         }
         images["summary_panel"] = draw_summary_panel(images)
         return images

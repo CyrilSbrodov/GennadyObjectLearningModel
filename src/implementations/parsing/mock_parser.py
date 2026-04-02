@@ -3,14 +3,20 @@ from __future__ import annotations
 import numpy as np
 
 from src.interfaces.contracts import HumanParser
-from src.models.schemas import Detection, PARSING_LABELS_V2, ParsedHuman
+from src.models.schemas import Detection, PARSING_LABELS_V2, ParsedHuman, PoseResult
 
 
 class MockParser(HumanParser):
     """Детерминированный мок парсинга с простыми масками."""
 
-    def parse(self, frame: np.ndarray, detections: list[Detection]) -> list[ParsedHuman]:
+    def parse(
+        self,
+        frame: np.ndarray,
+        detections: list[Detection],
+        poses: list[PoseResult] | None = None,
+    ) -> list[ParsedHuman]:
         """Создает прямоугольные маски по каноническим классам."""
+        del poses
         h, w = frame.shape[:2]
         output: list[ParsedHuman] = []
         for idx, det in enumerate(detections):

@@ -6,6 +6,7 @@ import numpy as np
 
 from src.implementations.rendering.opencv_renderer import OpenCVRenderer
 from src.implementations.scene.basic_scene_builder import BasicSceneBuilder
+from src.implementations.tracking.simple_tracker import SimpleTracker
 from src.models.schemas import Detection, ParsedHuman, PoseKeypoint, PoseResult, SceneFrame, TrackedHuman
 from src.representation.builder import HumanRepresentationBuilder
 from src.representation.parsing_adapters import create_adapter
@@ -60,6 +61,8 @@ class RepresentationTests(unittest.TestCase):
         self.assertIn("representation_masks_normalized", images)
         self.assertIn("representation_masks_garments", images)
         self.assertIn("anatomy_raw_overlay", images)
+        self.assertIn("sam2_raw_mask", images)
+        self.assertIn("sam2_prompt_debug", images)
         self.assertEqual(images["representation_overlay"].shape, self.frame.shape)
 
     def test_builder_v2_schema_produces_coarse_and_fine_parts(self) -> None:
@@ -129,6 +132,62 @@ class RepresentationTests(unittest.TestCase):
     def test_create_adapter_unknown_schema_raises(self) -> None:
         with self.assertRaises(ValueError):
             create_adapter("abc")
+
+    def test_create_adapter_sam2_supported(self) -> None:
+        adapter = create_adapter("sam2")
+        self.assertEqual(adapter.__class__.__name__, "SAM2ParsingAdapter")
+
+    def test_builder_sam2_schema_no_forced_garments(self) -> None:
+        masks = {
+            "person_mask": np.zeros((120, 160), dtype=np.uint8),
+            "head": np.zeros((120, 160), dtype=np.uint8),
+            "torso": np.zeros((120, 160), dtype=np.uint8),
+            "left_arm": np.zeros((120, 160), dtype=np.uint8),
+            "right_arm": np.zeros((120, 160), dtype=np.uint8),
+            "left_leg": np.zeros((120, 160), dtype=np.uint8),
+            "right_leg": np.zeros((120, 160), dtype=np.uint8),
+        }
+        masks["person_mask"][10:110, 20:100] = 1
+        masks["torso"][25:70, 30:90] = 1
+        masks["left_leg"][70:110, 30:60] = 1
+        masks["right_leg"][70:110, 60:90] = 1
+        masks["head"][10:25, 45:75] = 1
+        parsing = ParsedHuman(
+            detection_idx=0,
+            masks=masks,
+            confidence=0.8,
+            model_version="sam2-image-predictor-v1",
+            schema_version="sam2",
+            label_confidence={k: 0.6 for k in masks},
+            debug={"sam2_score": 0.9, "prompt_box": [20, 10, 100, 110], "prompt_points": [[60, 20]]},
+        )
+        tracked = TrackedHuman(track_id=5, detection=self.det, pose=None, parsed=parsing)
+        representation = HumanRepresentationBuilder().build_for_tracked_human(tracked, frame=self.frame)
+        self.assertIn("torso", representation.body_parts)
+        self.assertEqual(representation.garments, {})
+
+    def test_tracker_propagated_only_keeps_debug_and_copies_masks(self) -> None:
+        tracker = SimpleTracker(confidence_decay=0.5)
+        source_mask = np.zeros((120, 160), dtype=np.uint8)
+        source_mask[10:20, 10:20] = 1
+        propagated = ParsedHuman(
+            detection_idx=0,
+            masks={"person_mask": source_mask},
+            confidence=0.8,
+            model_version="sam2-image-predictor-v1",
+            schema_version="sam2",
+            label_confidence={"person_mask": 0.9},
+            debug={"prompt_box": [20, 10, 100, 110], "sam2_score": 0.92, "mask_shape": [120, 160]},
+        )
+
+        fused = tracker._fuse_parsed(parsed_new=None, parsed_propagated=propagated)
+        self.assertIsNotNone(fused)
+        assert fused is not None
+        self.assertEqual(fused.debug.get("sam2_score"), 0.92)
+        self.assertEqual(fused.label_confidence["person_mask"], 0.45)
+
+        propagated.masks["person_mask"][10, 10] = 0
+        self.assertEqual(int(fused.masks["person_mask"][10, 10]), 1)
 
     def test_summary_panel_render(self) -> None:
         scene = SceneFrame(frame_index=0, frame=self.frame, detections=[], poses=[], tracked=[])

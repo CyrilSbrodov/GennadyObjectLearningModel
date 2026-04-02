@@ -12,6 +12,10 @@ class AppConfig:
     device: str
     use_mock: bool
     parser_backend: str
+    sam2_checkpoint_path: str
+    sam2_model_cfg: str
+    sam2_device: str
+    sam2_use_pose_prompts: bool
     input_photo_dir: Path
     input_video_dir: Path
     output_root: Path

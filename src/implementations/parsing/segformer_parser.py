@@ -5,7 +5,7 @@ import numpy as np
 
 from src.implementations.parsing.segformer_adapter import MODEL_NAME, SegFormerAdapter
 from src.interfaces.contracts import HumanParser
-from src.models.schemas import Detection, PARSING_LABELS, ParsedHuman
+from src.models.schemas import Detection, PARSING_LABELS, ParsedHuman, PoseResult
 
 
 class SegFormerParser(HumanParser):
@@ -29,8 +29,14 @@ class SegFormerParser(HumanParser):
             label: np.array(sorted(self._mapped_ids(label)), dtype=np.uint8) for label in PARSING_LABELS
         }
 
-    def parse(self, frame: np.ndarray, detections: list[Detection]) -> list[ParsedHuman]:
+    def parse(
+        self,
+        frame: np.ndarray,
+        detections: list[Detection],
+        poses: list[PoseResult] | None = None,
+    ) -> list[ParsedHuman]:
         """Запускает SegFormer один раз на весь кадр и режет маски по детекциям."""
+        del poses
         if not detections:
             return []
 
