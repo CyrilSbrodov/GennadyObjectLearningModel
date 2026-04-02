@@ -32,6 +32,20 @@ def draw_parsing(scene: SceneFrame) -> np.ndarray:
     colors = {
         "face": (0, 200, 255),
         "hair": (0, 100, 255),
+        "head": (0, 160, 255),
+        "neck": (0, 220, 220),
+        "chest_left": (255, 0, 180),
+        "chest_right": (220, 0, 160),
+        "abdomen": (255, 160, 0),
+        "pelvis": (180, 120, 40),
+        "glute_left": (160, 80, 255),
+        "glute_right": (140, 60, 240),
+        "thigh_left": (255, 100, 100),
+        "thigh_right": (240, 90, 90),
+        "calf_left": (255, 140, 120),
+        "calf_right": (240, 130, 110),
+        "foot_left": (255, 255, 255),
+        "foot_right": (220, 220, 220),
         "upper_clothes": (255, 0, 255),
         "lower_clothes": (255, 255, 0),
         "left_hand": (100, 255, 100),
@@ -44,7 +58,7 @@ def draw_parsing(scene: SceneFrame) -> np.ndarray:
         if tracked.parsed is None:
             continue
         for label, mask in tracked.parsed.masks.items():
-            color = colors[label]
+            color = colors.get(label, (180, 180, 180))
             colored = np.zeros_like(canvas)
             colored[:, :] = color
             alpha = (mask > 0).astype(np.uint8)[:, :, None]

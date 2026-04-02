@@ -11,10 +11,31 @@ BodyPartName = Literal[
     "hair",
     "neck",
     "torso",
+    "chest_left",
+    "chest_right",
+    "abdomen",
+    "pelvis",
+    "glute_left",
+    "glute_right",
+    "back_upper",
+    "back_lower",
+    "breast_areola",
+    "left_shoulder",
+    "right_shoulder",
+    "left_upper_arm",
+    "right_upper_arm",
+    "left_forearm",
+    "right_forearm",
     "left_arm",
     "right_arm",
     "left_hand",
     "right_hand",
+    "left_thigh",
+    "right_thigh",
+    "left_knee",
+    "right_knee",
+    "left_calf",
+    "right_calf",
     "left_leg",
     "right_leg",
     "left_foot",
@@ -34,7 +55,17 @@ GarmentType = Literal[
     "unknown_garment",
 ]
 
-RelationType = Literal["attached_to", "covers", "overlaps", "touches", "contains"]
+RelationType = Literal[
+    "attached_to",
+    "covers",
+    "overlaps",
+    "touches",
+    "contains",
+    "adjacent_to",
+    "deforms_with",
+    "occludes",
+    "supports_motion_of",
+]
 HumanPoseState = Literal["standing", "sitting", "lying", "unknown_pose"]
 LimbState = Literal["lowered", "raised", "bent", "extended", "unknown_limb_state"]
 GarmentState = Literal["worn", "open", "closed", "removing", "removed", "unknown_garment_state"]
@@ -73,6 +104,10 @@ class BodyPart:
     suppressed_from_overlay: bool = False
     suppressed_from_relations: bool = False
     inferred_only: bool = False
+    deformation_state: Literal["neutral", "compressed", "stretched", "oscillating"] = "neutral"
+    motion_phase: float = 0.0
+    motion_amplitude: float = 0.0
+    symmetry_pair_id: str | None = None
 
 
 @dataclass(slots=True)

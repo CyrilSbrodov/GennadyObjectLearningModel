@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 
 import cv2
@@ -14,13 +15,16 @@ class _TrackState:
     track_id: int
     bbox: tuple[int, int, int, int]
     parsed: ParsedHuman | None
+    history_confidence: deque[float]
 
 
 class SimpleTracker(Tracker):
     """Простой трекер с переносом масок по сдвигу рамки."""
 
-    def __init__(self, iou_threshold: float = 0.3) -> None:
+    def __init__(self, iou_threshold: float = 0.3, history_size: int = 8, confidence_decay: float = 0.9) -> None:
         self.iou_threshold = iou_threshold
+        self.history_size = max(1, history_size)
+        self.confidence_decay = float(np.clip(confidence_decay, 0.0, 1.0))
         self._next_id = 1
         self._states: list[_TrackState] = []
 
@@ -42,10 +46,19 @@ class SimpleTracker(Tracker):
             if best_state is None or best_iou < self.iou_threshold:
                 track_id = self._next_id
                 self._next_id += 1
-                state = _TrackState(track_id=track_id, bbox=det.bbox, parsed=current_parsed)
+                state = _TrackState(
+                    track_id=track_id,
+                    bbox=det.bbox,
+                    parsed=current_parsed,
+                    history_confidence=deque([current_parsed.confidence] if current_parsed else [], maxlen=self.history_size),
+                )
             else:
-                propagated = current_parsed or self._propagate_mask(best_state.parsed, best_state.bbox, det.bbox)
-                state = _TrackState(track_id=best_state.track_id, bbox=det.bbox, parsed=propagated)
+                propagated = self._propagate_mask(best_state.parsed, best_state.bbox, det.bbox)
+                fused = self._fuse_parsed(current_parsed, propagated)
+                history = deque(best_state.history_confidence, maxlen=self.history_size)
+                if fused is not None:
+                    history.append(fused.confidence)
+                state = _TrackState(track_id=best_state.track_id, bbox=det.bbox, parsed=fused, history_confidence=history)
             new_states.append(state)
             matched_tracks.append(
                 TrackedHuman(
@@ -107,4 +120,54 @@ class SimpleTracker(Tracker):
             masks=new_masks,
             confidence=parsed.confidence,
             model_version=parsed.model_version,
+            schema_version=parsed.schema_version,
+            label_confidence={k: v for k, v in parsed.label_confidence.items()},
+        )
+
+    def _fuse_parsed(self, parsed_new: ParsedHuman | None, parsed_propagated: ParsedHuman | None) -> ParsedHuman | None:
+        """Confidence-aware blending между новым и протащенным парсингом."""
+        if parsed_new is None:
+            if parsed_propagated is None:
+                return None
+            decayed_conf = parsed_propagated.confidence * self.confidence_decay
+            return ParsedHuman(
+                detection_idx=parsed_propagated.detection_idx,
+                masks=parsed_propagated.masks,
+                confidence=decayed_conf,
+                model_version=parsed_propagated.model_version,
+                schema_version=parsed_propagated.schema_version,
+                label_confidence={k: v * self.confidence_decay for k, v in parsed_propagated.label_confidence.items()},
+            )
+        if parsed_propagated is None:
+            return parsed_new
+
+        fused_masks: dict[str, np.ndarray] = {}
+        labels = set(parsed_new.masks) | set(parsed_propagated.masks)
+
+        for label in labels:
+            new_mask = parsed_new.masks.get(label)
+            old_mask = parsed_propagated.masks.get(label)
+            if new_mask is None:
+                fused_masks[label] = old_mask.copy()
+                continue
+            if old_mask is None:
+                fused_masks[label] = new_mask.copy()
+                continue
+
+            new_weight = parsed_new.label_confidence.get(label, parsed_new.confidence)
+            old_weight = parsed_propagated.label_confidence.get(label, parsed_propagated.confidence) * self.confidence_decay
+            if new_weight >= old_weight:
+                fused_masks[label] = np.where(new_mask > 0, 1, old_mask).astype(np.uint8)
+            else:
+                fused_masks[label] = np.where(old_mask > 0, 1, new_mask).astype(np.uint8)
+
+        total_conf = max(parsed_new.confidence, parsed_propagated.confidence * self.confidence_decay)
+        merged_label_conf = {**parsed_propagated.label_confidence, **parsed_new.label_confidence}
+        return ParsedHuman(
+            detection_idx=parsed_new.detection_idx,
+            masks=fused_masks,
+            confidence=total_conf,
+            model_version=parsed_new.model_version,
+            schema_version=parsed_new.schema_version,
+            label_confidence=merged_label_conf,
         )

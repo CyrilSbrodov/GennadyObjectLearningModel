@@ -49,6 +49,7 @@ class SegFormerParser(HumanParser):
                         masks=self._empty_masks(frame.shape[:2]),
                         confidence=0.0,
                         model_version=MODEL_NAME,
+                        schema_version="v1",
                     )
                 )
                 continue
@@ -75,6 +76,7 @@ class SegFormerParser(HumanParser):
                     masks=masks,
                     confidence=confidence,
                     model_version=MODEL_NAME,
+                    schema_version="v1",
                 )
             )
         return parsed_list
