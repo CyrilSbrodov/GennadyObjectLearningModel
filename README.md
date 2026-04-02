@@ -24,6 +24,8 @@
 - `garments`
 - `relations`
 - `state`
+- `reliability/evidence` поля у body parts и garments
+- агрегаты `dominant_garments`, `has_layered_upper_clothing`, счетчики надежных сущностей
 - технические поля кадра и confidence
 
 Все координаты и маски остаются в координатах исходного кадра.
@@ -52,8 +54,10 @@
 - `person_mask`, body parts и garments мягко клипаются к bbox для более консистентного v1-представления
 - `keypoints` из `PoseResult` с аккуратным именованием MediaPipe-индексов
 - `body_parts` из parsing + простых эвристик
-- `garments` из mapping parsing labels
-- `relations` rule-based между garment и body parts
+- `garments` из parsing + эвристический разбор верхнего слоя (`upper_inner`/`outerwear`)
+- `reliability_score` + категориальная `reliability` по visibility/evidence/типу источников
+- normalization/filtering: слабые сущности подавляются в overlay/relations, но сохраняются для debug
+- `relations` rule-based c учетом reliability и suppression
 - `state` (pose/arms) по геометрическим правилам
 
 Если `pose` или `parsing` отсутствуют, builder возвращает валидный объект без падения.
@@ -64,8 +68,9 @@
 - Тип одежды в сложных случаях может упрощаться до `pants`/`upper_inner`/`unknown_garment`.
 - Руки и шея строятся эвристически и могут отсутствовать при нехватке надежных keypoints.
 - Если у парсинга есть только общая `shoes`-маска, `left_foot/right_foot` аппроксимируются делением маски по центру bbox.
-- Layering одежды в v1 ограничен базовыми правилами (`outerwear` поверх `upper_inner`, если оба слоя есть).
-- Связи (`relations`) и `occlusion` в v1 базовые и консервативные: лучше меньше связей, чем уверенно ложные.
+- Layered upper clothing строится эвристически и гибридно (контраст/центр/геометрия), а не learned-моделью.
+- В weak-кейсах применено консервативное поведение: система откатывается к одному `upper_inner` без принудительного `outerwear`.
+- Связи (`relations`) и `occlusion` теперь reliability-aware: низконадежные сущности чаще исключаются из relation-слоя.
 - Временная устойчивость пока на уровне groundwork через стабильный `human_id` в треке.
 
 ## Как запустить проект
@@ -90,15 +95,17 @@ python main.py --device cpu
 - `output/combined/`
 - `output/representation_overlay/`
 - `output/representation_debug/`
+- `output/representation_masks/`
 - `output/summary_panel/`
 
 Имена файлов стабильные: `<base_name>_frame_<индекс>.png`.
 
 ## Что смотреть в PNG для быстрой оценки
 1. `combined` — базовая согласованность detection/pose/parsing.
-2. `representation_overlay` — компактный слой (bbox + ключевые labels + краткое состояние), без перегрузки кадра.
-3. `representation_debug` — подробные списки частей тела/одежды/связей/confidence.
-4. `summary_panel` — быстрая сравнительная сводка, где debug-preview адаптирован для лучшей читаемости текста.
+2. `representation_overlay` — компактный reliability-aware слой (слои одежды + число надежных сущностей).
+3. `representation_masks` — семантические маски person/body_parts/garments с легендой для инженерной валидации.
+4. `representation_debug` — подробные списки частей тела/одежды/связей/confidence/evidence/suppression-флагов.
+5. `summary_panel` — быстрая сравнительная сводка, куда добавлен preview semantic masks.
 
 ## Следующий этап развития
 - Улучшение стабильности garment-идентичности во времени.

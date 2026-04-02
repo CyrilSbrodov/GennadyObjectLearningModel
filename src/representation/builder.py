@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import cv2
 import numpy as np
 
 from src.models.schemas import ParsedHuman, TrackedHuman
+from src.representation.filtering import RepresentationThresholds, apply_suppression
+from src.representation.garment_reasoning import build_upper_garments, infer_upper_garment_candidates
+from src.representation.reliability import score_body_part, score_garment
 from src.representation.schemas import BodyPart, Garment, HumanRepresentation, HumanState, Keypoint2D, MaskRegion
 from src.representation.state_rules import (
     build_person_mask,
@@ -26,6 +29,7 @@ class HumanRepresentationBuilder:
     min_keypoint_confidence: float = 0.2
     # Толщина линии сегмента руки относительно размера bbox.
     arm_thickness_ratio: float = 0.08
+    thresholds: RepresentationThresholds = field(default_factory=RepresentationThresholds)
 
     def build_for_tracked_human(
         self,
@@ -33,6 +37,7 @@ class HumanRepresentationBuilder:
         frame_index: int = 0,
         timestamp_sec: float | None = None,
         frame_shape: tuple[int, int] | None = None,
+        frame: np.ndarray | None = None,
     ) -> HumanRepresentation:
         """Создает представление человека устойчиво к неполным данным."""
         human_id = f"human_{tracked_human.track_id}"
@@ -45,13 +50,23 @@ class HumanRepresentationBuilder:
 
         person_mask = self._clip_region_to_bbox(self._build_person_mask(parsing), bbox=bbox, shape=effective_shape)
         body_parts = self._build_body_parts(bbox=bbox, keypoints=keypoints, parsing=parsing, shape=effective_shape)
-        garments = self._build_garments(human_id=human_id, bbox=bbox, parsing=parsing, shape=effective_shape)
+        garments = self._build_garments(human_id=human_id, bbox=bbox, parsing=parsing, shape=effective_shape, frame=frame)
+
+        self._enrich_reliability(body_parts=body_parts, garments=garments)
+        body_parts, garments = apply_suppression(body_parts=body_parts, garments=garments, thresholds=self.thresholds)
         relations = infer_relations(garments=garments, body_parts=body_parts)
+
         state = HumanState(
             pose_state=infer_pose_state(keypoints=keypoints, bbox=bbox),
             left_arm_state=infer_arm_state("left", keypoints=keypoints, bbox=bbox),
             right_arm_state=infer_arm_state("right", keypoints=keypoints, bbox=bbox),
         )
+
+        dominant_garments = [
+            garment.garment_type
+            for garment in sorted(garments.values(), key=lambda item: item.reliability_score, reverse=True)
+            if not garment.suppressed_from_overlay
+        ]
 
         return HumanRepresentation(
             human_id=human_id,
@@ -66,6 +81,11 @@ class HumanRepresentationBuilder:
             timestamp_sec=timestamp_sec,
             identity_confidence=float(tracked_human.detection.confidence),
             parsing_confidence=float(parsing.confidence) if parsing is not None else 0.0,
+            dominant_garments=list(dict.fromkeys(dominant_garments[:3])),
+            has_layered_upper_clothing=any(g.garment_type == "outerwear" for g in garments.values())
+            and any(g.garment_type == "upper_inner" for g in garments.values()),
+            reliable_body_parts_count=sum(1 for part in body_parts.values() if part.reliability in ("high", "medium")),
+            reliable_garments_count=sum(1 for garment in garments.values() if garment.reliability in ("high", "medium")),
         )
 
     def _build_person_mask(self, parsing: ParsedHuman | None) -> MaskRegion | None:
@@ -89,43 +109,83 @@ class HumanRepresentationBuilder:
         hair_region = self._safe_region(masks.get("hair"), parsing)
         head_region = self._union_regions([face_region, hair_region])
 
-        region_by_part: dict[str, MaskRegion | None] = {
-            "head": self._clip_region_to_bbox(head_region, bbox=bbox, shape=shape),
-            "face": self._clip_region_to_bbox(face_region, bbox=bbox, shape=shape),
-            "hair": self._clip_region_to_bbox(hair_region, bbox=bbox, shape=shape),
-            "torso": self._clip_region_to_bbox(self._safe_region(masks.get("upper_clothes"), parsing), bbox=bbox, shape=shape),
-            "left_hand": self._clip_region_to_bbox(self._safe_region(masks.get("left_hand"), parsing), bbox=bbox, shape=shape),
-            "right_hand": self._clip_region_to_bbox(self._safe_region(masks.get("right_hand"), parsing), bbox=bbox, shape=shape),
-            "left_leg": self._clip_region_to_bbox(self._safe_region(masks.get("left_leg"), parsing), bbox=bbox, shape=shape),
-            "right_leg": self._clip_region_to_bbox(self._safe_region(masks.get("right_leg"), parsing), bbox=bbox, shape=shape),
+        region_by_part: dict[str, tuple[MaskRegion | None, list[str], bool]] = {
+            "head": (self._clip_region_to_bbox(head_region, bbox=bbox, shape=shape), ["parsing", "union"], False),
+            "face": (self._clip_region_to_bbox(face_region, bbox=bbox, shape=shape), ["parsing"], False),
+            "hair": (self._clip_region_to_bbox(hair_region, bbox=bbox, shape=shape), ["parsing"], False),
+            "torso": (
+                self._clip_region_to_bbox(self._safe_region(masks.get("upper_clothes"), parsing), bbox=bbox, shape=shape),
+                ["parsing"],
+                False,
+            ),
+            "left_hand": (
+                self._clip_region_to_bbox(self._safe_region(masks.get("left_hand"), parsing), bbox=bbox, shape=shape),
+                ["parsing"],
+                False,
+            ),
+            "right_hand": (
+                self._clip_region_to_bbox(self._safe_region(masks.get("right_hand"), parsing), bbox=bbox, shape=shape),
+                ["parsing"],
+                False,
+            ),
+            "left_leg": (
+                self._clip_region_to_bbox(self._safe_region(masks.get("left_leg"), parsing), bbox=bbox, shape=shape),
+                ["parsing"],
+                False,
+            ),
+            "right_leg": (
+                self._clip_region_to_bbox(self._safe_region(masks.get("right_leg"), parsing), bbox=bbox, shape=shape),
+                ["parsing"],
+                False,
+            ),
         }
 
         arm_regions = self._build_arm_regions(keypoints=keypoints, bbox=bbox, masks=masks, shape=shape)
         if arm_regions["left_arm"] is not None:
-            region_by_part["left_arm"] = self._clip_region_to_bbox(arm_regions["left_arm"], bbox=bbox, shape=shape)
+            region_by_part["left_arm"] = (
+                self._clip_region_to_bbox(arm_regions["left_arm"], bbox=bbox, shape=shape),
+                ["pose", "heuristic"],
+                True,
+            )
         if arm_regions["right_arm"] is not None:
-            region_by_part["right_arm"] = self._clip_region_to_bbox(arm_regions["right_arm"], bbox=bbox, shape=shape)
+            region_by_part["right_arm"] = (
+                self._clip_region_to_bbox(arm_regions["right_arm"], bbox=bbox, shape=shape),
+                ["pose", "heuristic"],
+                True,
+            )
 
         shoes_mask = masks.get("shoes")
         left_foot_region, right_foot_region = self._split_shoes_region(shoes_mask=shoes_mask, parsing=parsing, bbox=bbox)
         if left_foot_region is not None:
-            region_by_part["left_foot"] = self._clip_region_to_bbox(left_foot_region, bbox=bbox, shape=shape)
+            region_by_part["left_foot"] = (
+                self._clip_region_to_bbox(left_foot_region, bbox=bbox, shape=shape),
+                ["parsing", "split_from_shoes"],
+                True,
+            )
         if right_foot_region is not None:
-            region_by_part["right_foot"] = self._clip_region_to_bbox(right_foot_region, bbox=bbox, shape=shape)
+            region_by_part["right_foot"] = (
+                self._clip_region_to_bbox(right_foot_region, bbox=bbox, shape=shape),
+                ["parsing", "split_from_shoes"],
+                True,
+            )
 
         if "left_shoulder" in keypoints and "right_shoulder" in keypoints:
             neck_region = self._build_neck_region(bbox, parsing)
             if neck_region is not None:
-                region_by_part["neck"] = self._clip_region_to_bbox(neck_region, bbox=bbox, shape=shape)
+                region_by_part["neck"] = (self._clip_region_to_bbox(neck_region, bbox=bbox, shape=shape), ["heuristic", "pose"], True)
 
-        for part_name, region in region_by_part.items():
+        for part_name, (region, evidence_sources, inferred_only) in region_by_part.items():
             visible_fraction = estimate_visible_fraction(region=region, bbox=bbox)
+            if region is not None:
+                evidence_sources = [*evidence_sources, "clipped_to_bbox"]
             parts[part_name] = BodyPart(
                 part_id=part_name,
                 name=part_name,
                 region=region,
                 visible_fraction=visible_fraction,
                 occluded=(region is None) or visible_fraction < 0.1,
+                evidence_sources=evidence_sources,
+                inferred_only=inferred_only,
             )
         return parts
 
@@ -135,22 +195,22 @@ class HumanRepresentationBuilder:
         bbox: tuple[int, int, int, int],
         parsing: ParsedHuman | None,
         shape: tuple[int, int],
+        frame: np.ndarray | None,
     ) -> dict[str, Garment]:
-        """Маппит labels парсинга в garment-сущности v1."""
+        """Строит одежду с эвристическим разбором верхних слоев."""
         if parsing is None:
             return {}
         garments: dict[str, Garment] = {}
 
-        if "upper_clothes" in parsing.masks:
-            region = self._clip_region_to_bbox(self._safe_region(parsing.masks["upper_clothes"], parsing), bbox=bbox, shape=shape)
-            garments[f"{human_id}_garment_upper_0"] = Garment(
-                garment_id=f"{human_id}_garment_upper_0",
-                garment_type="upper_inner",
-                region=region,
-                visible_fraction=estimate_visible_fraction(region, bbox),
-                state="worn",
-                attached_body_parts=["torso", "left_arm", "right_arm"],
-            )
+        upper_hypothesis = infer_upper_garment_candidates(frame=frame, bbox=bbox, parsing=parsing)
+        upper_garments = build_upper_garments(human_id=human_id, bbox=bbox, hypothesis=upper_hypothesis)
+        for garment in upper_garments.values():
+            if garment.region is not None:
+                garment.region = self._clip_region_to_bbox(garment.region, bbox=bbox, shape=shape)
+                garment.visible_fraction = estimate_visible_fraction(garment.region, bbox)
+                if garment.region is not None:
+                    garment.evidence_sources.append("clipped_to_bbox")
+        garments.update(upper_garments)
 
         if "lower_clothes" in parsing.masks:
             region = self._clip_region_to_bbox(self._safe_region(parsing.masks["lower_clothes"], parsing), bbox=bbox, shape=shape)
@@ -161,6 +221,7 @@ class HumanRepresentationBuilder:
                 visible_fraction=estimate_visible_fraction(region, bbox),
                 state="worn",
                 attached_body_parts=["left_leg", "right_leg"],
+                evidence_sources=["parsing", "clipped_to_bbox"],
             )
 
         if "shoes" in parsing.masks:
@@ -172,9 +233,34 @@ class HumanRepresentationBuilder:
                 visible_fraction=estimate_visible_fraction(region, bbox),
                 state="worn",
                 attached_body_parts=["left_foot", "right_foot"],
+                evidence_sources=["parsing", "clipped_to_bbox"],
+            )
+
+        if not garments and "upper_clothes" in parsing.masks:
+            region = self._clip_region_to_bbox(self._safe_region(parsing.masks["upper_clothes"], parsing), bbox=bbox, shape=shape)
+            garments[f"{human_id}_garment_upper_0"] = Garment(
+                garment_id=f"{human_id}_garment_upper_0",
+                garment_type="upper_inner",
+                region=region,
+                visible_fraction=estimate_visible_fraction(region, bbox),
+                state="worn",
+                attached_body_parts=["torso", "left_arm", "right_arm"],
+                evidence_sources=["parsing", "clipped_to_bbox"],
             )
 
         return garments
+
+    def _enrich_reliability(self, body_parts: dict[str, BodyPart], garments: dict[str, Garment]) -> None:
+        """Проставляет score и категорию reliability для сущностей."""
+        for part in body_parts.values():
+            score, level = score_body_part(part)
+            part.reliability_score = score
+            part.reliability = level
+
+        for garment in garments.values():
+            score, level = score_garment(garment)
+            garment.reliability_score = score
+            garment.reliability = level
 
     @staticmethod
     def _safe_region(mask: np.ndarray | None, parsing: ParsedHuman | None) -> MaskRegion | None:

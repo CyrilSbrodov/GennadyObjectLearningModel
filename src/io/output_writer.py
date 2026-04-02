@@ -17,6 +17,7 @@ class OutputWriter:
         self.combined_dir = root / "combined"
         self.representation_overlay_dir = root / "representation_overlay"
         self.representation_debug_dir = root / "representation_debug"
+        self.representation_masks_dir = root / "representation_masks"
         self.summary_panel_dir = root / "summary_panel"
         for directory in [
             self.debug_dir,
@@ -26,6 +27,7 @@ class OutputWriter:
             self.combined_dir,
             self.representation_overlay_dir,
             self.representation_debug_dir,
+            self.representation_masks_dir,
             self.summary_panel_dir,
         ]:
             directory.mkdir(parents=True, exist_ok=True)
@@ -39,5 +41,6 @@ class OutputWriter:
         cv2.imwrite(str(self.combined_dir / stem), images["combined"])
         cv2.imwrite(str(self.representation_overlay_dir / stem), images["representation_overlay"])
         cv2.imwrite(str(self.representation_debug_dir / stem), images["representation_debug"])
+        cv2.imwrite(str(self.representation_masks_dir / stem), images["representation_masks"])
         cv2.imwrite(str(self.summary_panel_dir / stem), images["summary_panel"])
         cv2.imwrite(str(self.debug_dir / stem), images["combined"])

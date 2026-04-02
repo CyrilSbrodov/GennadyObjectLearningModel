@@ -54,6 +54,7 @@ class RepresentationTests(unittest.TestCase):
         scene = BasicSceneBuilder().build(self.frame, [self.det], [pose], [tracked])
         images = OpenCVRenderer().render(scene)
         self.assertIn("representation_overlay", images)
+        self.assertIn("representation_masks", images)
         self.assertEqual(images["representation_overlay"].shape, self.frame.shape)
 
     def test_summary_panel_render(self) -> None:
