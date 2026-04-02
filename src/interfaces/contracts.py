@@ -27,7 +27,12 @@ class HumanParser(ABC):
     """Интерфейс парсинга одежды и частей тела."""
 
     @abstractmethod
-    def parse(self, frame: np.ndarray, detections: list[Detection]) -> list[ParsedHuman]:
+    def parse(
+        self,
+        frame: np.ndarray,
+        detections: list[Detection],
+        poses: list[PoseResult] | None = None,
+    ) -> list[ParsedHuman]:
         """Возвращает сегментацию человека по каноническим классам."""
 
 

@@ -243,12 +243,48 @@ class V2ParsingAdapter:
         return garments
 
 
-def create_adapter(schema_version: str) -> V1ParsingAdapter | V2ParsingAdapter:
+class SAM2ParsingAdapter:
+    """Адаптер для schema sam2: person mask + coarse части тела."""
+
+    PARTS: dict[str, str] = {
+        "head": "head",
+        "torso": "torso",
+        "left_arm": "left_arm",
+        "right_arm": "right_arm",
+        "left_leg": "left_leg",
+        "right_leg": "right_leg",
+    }
+
+    def build_body_parts(self, ctx: _AdapterContext, *, min_kp_conf: float, arm_thickness_ratio: float) -> dict[str, BodyPart]:
+        del min_kp_conf, arm_thickness_ratio
+        parts: dict[str, BodyPart] = {}
+        for label, part_name in self.PARTS.items():
+            region = _clip_to_bbox(_safe_region(ctx.parsing.masks.get(label), ctx.parsing, per_label=True, label=label), ctx.bbox, ctx.shape)
+            parts[part_name] = _make_part(
+                part_name,
+                region,
+                ["parsing", "schema_sam2", "heuristic", f"label:{label}", *ctx.model_evidence],
+                True,
+                ctx.bbox,
+            )
+        return parts
+
+    def build_garments(self, ctx: _AdapterContext) -> dict[str, Garment]:
+        del ctx
+        # На SAM2 path не создаем garment labels автоматически.
+        # Причина: текущая ветка SAM2 дает надежную person segmentation,
+        # но не дает надежных garment semantics.
+        return {}
+
+
+def create_adapter(schema_version: str) -> V1ParsingAdapter | V2ParsingAdapter | SAM2ParsingAdapter:
     """Возвращает адаптер под schema_version или бросает ошибку для неизвестной схемы."""
     if schema_version == "v1":
         return V1ParsingAdapter()
     if schema_version == "v2":
         return V2ParsingAdapter()
+    if schema_version == "sam2":
+        return SAM2ParsingAdapter()
     raise ValueError(f"Неизвестная schema_version: {schema_version}")
 
 

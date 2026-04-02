@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 import cv2
 import numpy as np
+import logging
 
 from src.interfaces.contracts import Tracker
 from src.models.schemas import Detection, ParsedHuman, PoseResult, TrackedHuman
@@ -22,6 +23,7 @@ class SimpleTracker(Tracker):
     """Простой трекер с переносом масок по сдвигу рамки."""
 
     def __init__(self, iou_threshold: float = 0.3, history_size: int = 8, confidence_decay: float = 0.9) -> None:
+        self.logger = logging.getLogger(self.__class__.__name__)
         self.iou_threshold = iou_threshold
         self.history_size = max(1, history_size)
         self.confidence_decay = float(np.clip(confidence_decay, 0.0, 1.0))
@@ -122,6 +124,7 @@ class SimpleTracker(Tracker):
             model_version=parsed.model_version,
             schema_version=parsed.schema_version,
             label_confidence={k: v for k, v in parsed.label_confidence.items()},
+            debug={k: v for k, v in parsed.debug.items()},
         )
 
     def _fuse_parsed(self, parsed_new: ParsedHuman | None, parsed_propagated: ParsedHuman | None) -> ParsedHuman | None:
@@ -130,13 +133,15 @@ class SimpleTracker(Tracker):
             if parsed_propagated is None:
                 return None
             decayed_conf = parsed_propagated.confidence * self.confidence_decay
+            propagated_masks = {label: mask.copy() for label, mask in parsed_propagated.masks.items()}
             return ParsedHuman(
                 detection_idx=parsed_propagated.detection_idx,
-                masks=parsed_propagated.masks,
+                masks=propagated_masks,
                 confidence=decayed_conf,
                 model_version=parsed_propagated.model_version,
                 schema_version=parsed_propagated.schema_version,
                 label_confidence={k: v * self.confidence_decay for k, v in parsed_propagated.label_confidence.items()},
+                debug={k: v for k, v in parsed_propagated.debug.items()},
             )
         if parsed_propagated is None:
             return parsed_new
@@ -156,6 +161,16 @@ class SimpleTracker(Tracker):
             if old_mask is None:
                 fused_masks[label] = new_mask.copy()
                 continue
+            if new_mask.shape != old_mask.shape:
+                self.logger.warning(
+                    "Skip merge for label=%s because shape mismatch: new=%s old=%s schema=%s",
+                    label,
+                    new_mask.shape,
+                    old_mask.shape,
+                    parsed_new.schema_version,
+                )
+                fused_masks[label] = new_mask.copy()
+                continue
 
             new_weight = parsed_new.label_confidence.get(label, parsed_new.confidence)
             old_weight = parsed_propagated.label_confidence.get(label, parsed_propagated.confidence) * self.confidence_decay
@@ -173,4 +188,5 @@ class SimpleTracker(Tracker):
             model_version=parsed_new.model_version,
             schema_version=parsed_new.schema_version,
             label_confidence=merged_label_conf,
+            debug={**parsed_propagated.debug, **parsed_new.debug},
         )

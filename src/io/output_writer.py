@@ -22,6 +22,8 @@ class OutputWriter:
         self.representation_masks_normalized_dir = root / "representation_masks_normalized"
         self.representation_masks_garments_dir = root / "representation_masks_garments"
         self.anatomy_raw_overlay_dir = root / "anatomy_raw_overlay"
+        self.sam2_raw_mask_dir = root / "sam2_raw_mask"
+        self.sam2_prompt_debug_dir = root / "sam2_prompt_debug"
         self.summary_panel_dir = root / "summary_panel"
         for directory in [
             self.debug_dir,
@@ -36,6 +38,8 @@ class OutputWriter:
             self.representation_masks_normalized_dir,
             self.representation_masks_garments_dir,
             self.anatomy_raw_overlay_dir,
+            self.sam2_raw_mask_dir,
+            self.sam2_prompt_debug_dir,
             self.summary_panel_dir,
         ]:
             directory.mkdir(parents=True, exist_ok=True)
@@ -54,5 +58,7 @@ class OutputWriter:
         cv2.imwrite(str(self.representation_masks_normalized_dir / stem), images["representation_masks_normalized"])
         cv2.imwrite(str(self.representation_masks_garments_dir / stem), images["representation_masks_garments"])
         cv2.imwrite(str(self.anatomy_raw_overlay_dir / stem), images["anatomy_raw_overlay"])
+        cv2.imwrite(str(self.sam2_raw_mask_dir / stem), images["sam2_raw_mask"])
+        cv2.imwrite(str(self.sam2_prompt_debug_dir / stem), images["sam2_prompt_debug"])
         cv2.imwrite(str(self.summary_panel_dir / stem), images["summary_panel"])
         cv2.imwrite(str(self.debug_dir / stem), images["combined"])

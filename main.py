@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 from pathlib import Path
 
 import cv2
@@ -29,6 +30,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", type=str, choices=["cpu", "cuda"], default="cpu")
     parser.add_argument("--use-mock", action="store_true")
     parser.add_argument("--parser-backend", type=str, choices=["segformer", "sam2"], default="segformer")
+    parser.add_argument("--sam2-checkpoint", type=str, default=os.getenv("SAM2_CHECKPOINT", ""))
+    parser.add_argument(
+        "--sam2-config",
+        type=str,
+        default=os.getenv("SAM2_MODEL_CFG", "configs/sam2.1/sam2.1_hiera_l.yaml"),
+    )
+    parser.add_argument("--sam2-device", type=str, choices=["cpu", "cuda"], default=None)
+    parser.add_argument("--sam2-use-pose-prompts", action="store_true")
     return parser.parse_args()
 
 
@@ -40,6 +49,10 @@ def build_config(args: argparse.Namespace) -> AppConfig:
         device=args.device,
         use_mock=args.use_mock,
         parser_backend=args.parser_backend,
+        sam2_checkpoint_path=args.sam2_checkpoint,
+        sam2_model_cfg=args.sam2_config,
+        sam2_device=args.sam2_device or args.device,
+        sam2_use_pose_prompts=args.sam2_use_pose_prompts,
         input_photo_dir=root / "input" / "photo",
         input_video_dir=root / "input" / "video",
         output_root=root / "output",
@@ -49,6 +62,7 @@ def build_config(args: argparse.Namespace) -> AppConfig:
 def main() -> None:
     """Точка входа: выбирает входы и запускает конвейер."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+    logger = logging.getLogger("main")
     args = parse_args()
     config = build_config(args)
 
@@ -59,7 +73,21 @@ def main() -> None:
     else:
         detector = YOLODetector(device=config.device)
         pose_extractor = MediapipeHolisticAdapter()
-        parser = SAM2AnatomyParser() if config.parser_backend == "sam2" else SegFormerParser(device=config.device)
+        if config.parser_backend == "sam2":
+            if not config.sam2_checkpoint_path:
+                raise ValueError("SAM2 backend требует --sam2-checkpoint или переменную окружения SAM2_CHECKPOINT.")
+            try:
+                parser = SAM2AnatomyParser(
+                    checkpoint_path=config.sam2_checkpoint_path,
+                    model_cfg=config.sam2_model_cfg,
+                    device=config.sam2_device,
+                    use_pose_prompts=config.sam2_use_pose_prompts,
+                )
+            except Exception as exc:
+                logger.exception("Не удалось инициализировать SAM2 backend: %s", exc)
+                raise
+        else:
+            parser = SegFormerParser(device=config.device)
 
     orchestrator = PipelineOrchestrator(
         fast_pipeline=FastPipeline(detector=detector, pose_extractor=pose_extractor),

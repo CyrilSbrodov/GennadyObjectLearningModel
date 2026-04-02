@@ -49,6 +49,16 @@ V2_COLORS: dict[str, tuple[int, int, int]] = {
     "breast_areola": (120, 80, 200),
 }
 
+SAM2_COLORS: dict[str, tuple[int, int, int]] = {
+    "person_mask": (120, 120, 120),
+    "head": (0, 210, 255),
+    "torso": (255, 0, 180),
+    "left_arm": (255, 220, 100),
+    "right_arm": (235, 200, 90),
+    "left_leg": (255, 100, 100),
+    "right_leg": (230, 90, 90),
+}
+
 
 def draw_detection(scene: SceneFrame) -> np.ndarray:
     """Рисует рамки детекции."""
@@ -87,8 +97,10 @@ def _draw_parsing_overlay(scene: SceneFrame, force_v2_detail: bool) -> np.ndarra
         if tracked.parsed is None:
             continue
 
-        is_v2 = tracked.parsed.schema_version == "v2"
-        palette = V2_COLORS if is_v2 else V1_COLORS
+        schema = tracked.parsed.schema_version
+        is_v2 = schema == "v2"
+        is_sam2 = schema == "sam2"
+        palette = V2_COLORS if is_v2 else (SAM2_COLORS if is_sam2 else V1_COLORS)
         alpha = 0.45 if (is_v2 and force_v2_detail) else 0.35
 
         labels = list(tracked.parsed.masks.keys())
@@ -104,6 +116,19 @@ def _draw_parsing_overlay(scene: SceneFrame, force_v2_detail: bool) -> np.ndarra
 
         if is_v2 and force_v2_detail:
             _draw_v2_label_hints(canvas, tracked.parsed.masks, tracked.detection.bbox)
+        if is_sam2:
+            debug_payload = tracked.parsed.debug if isinstance(tracked.parsed.debug, dict) else {}
+            score = float(debug_payload.get("sam2_score", tracked.parsed.confidence))
+            x1, y1, _, _ = tracked.detection.bbox
+            cv2.putText(
+                canvas,
+                f"sam2 score={score:.3f}",
+                (x1, max(14, y1 - 6)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.42,
+                (240, 240, 240),
+                1,
+            )
 
     return canvas
 
@@ -126,3 +151,39 @@ def draw_combined(scene: SceneFrame) -> np.ndarray:
     combined = cv2.addWeighted(det, 0.4, pose, 0.3, 0)
     combined = cv2.addWeighted(combined, 0.7, parsing, 0.3, 0)
     return combined
+
+
+def draw_sam2_raw_mask(scene: SceneFrame) -> np.ndarray:
+    """Отдельный отладочный canvas только с person_mask от SAM2."""
+    canvas = scene.frame.copy()
+    for tracked in scene.tracked:
+        parsed = tracked.parsed
+        if parsed is None or parsed.schema_version != "sam2":
+            continue
+        mask = parsed.masks.get("person_mask")
+        if mask is None:
+            continue
+        color = np.zeros_like(canvas)
+        color[:] = (80, 200, 100)
+        canvas = np.where((mask > 0)[:, :, None], cv2.addWeighted(canvas, 0.5, color, 0.5, 0), canvas)
+    return canvas
+
+
+def draw_sam2_prompt_debug(scene: SceneFrame) -> np.ndarray:
+    """Рисует prompt box/points, отправленные в SAM2."""
+    canvas = scene.frame.copy()
+    for tracked in scene.tracked:
+        parsed = tracked.parsed
+        if parsed is None or parsed.schema_version != "sam2":
+            continue
+        debug_payload = parsed.debug if isinstance(parsed.debug, dict) else {}
+        prompt_box = debug_payload.get("prompt_box")
+        if isinstance(prompt_box, (list, tuple)) and len(prompt_box) == 4:
+            x1, y1, x2, y2 = [int(v) for v in prompt_box]
+            cv2.rectangle(canvas, (x1, y1), (x2, y2), (0, 255, 255), 2)
+        prompt_points = debug_payload.get("prompt_points", [])
+        if isinstance(prompt_points, list):
+            for point in prompt_points:
+                if isinstance(point, list) and len(point) == 2:
+                    cv2.circle(canvas, (int(point[0]), int(point[1])), 3, (255, 0, 255), -1)
+    return canvas
