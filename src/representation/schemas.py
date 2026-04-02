@@ -38,6 +38,7 @@ RelationType = Literal["attached_to", "covers", "overlaps", "touches", "contains
 HumanPoseState = Literal["standing", "sitting", "lying", "unknown_pose"]
 LimbState = Literal["lowered", "raised", "bent", "extended", "unknown_limb_state"]
 GarmentState = Literal["worn", "open", "closed", "removing", "removed", "unknown_garment_state"]
+ReliabilityLevel = Literal["high", "medium", "low", "inferred"]
 
 
 @dataclass(slots=True)
@@ -66,6 +67,12 @@ class BodyPart:
     region: MaskRegion | None = None
     visible_fraction: float = 0.0
     occluded: bool = False
+    reliability: ReliabilityLevel = "low"
+    reliability_score: float = 0.0
+    evidence_sources: list[str] = field(default_factory=list)
+    suppressed_from_overlay: bool = False
+    suppressed_from_relations: bool = False
+    inferred_only: bool = False
 
 
 @dataclass(slots=True)
@@ -79,6 +86,14 @@ class Garment:
     state: GarmentState = "unknown_garment_state"
     attached_body_parts: list[str] = field(default_factory=list)
     covered_by: list[str] = field(default_factory=list)
+    reliability: ReliabilityLevel = "low"
+    reliability_score: float = 0.0
+    evidence_sources: list[str] = field(default_factory=list)
+    layer_rank: int | None = None
+    is_outer_layer_candidate: bool = False
+    suppressed_from_overlay: bool = False
+    suppressed_from_relations: bool = False
+    inferred_only: bool = False
 
 
 @dataclass(slots=True)
@@ -116,3 +131,7 @@ class HumanRepresentation:
     timestamp_sec: float | None = None
     identity_confidence: float = 0.0
     parsing_confidence: float = 0.0
+    dominant_garments: list[str] = field(default_factory=list)
+    has_layered_upper_clothing: bool = False
+    reliable_body_parts_count: int = 0
+    reliable_garments_count: int = 0

@@ -7,6 +7,7 @@ from src.models.schemas import SceneFrame
 from src.visualization.drawing import draw_combined, draw_detection, draw_parsing, draw_pose
 from src.visualization.representation_drawing import (
     draw_representation_debug,
+    draw_representation_masks,
     draw_representation_overlay,
     draw_summary_panel,
 )
@@ -23,6 +24,7 @@ class OpenCVRenderer(Renderer):
         combined = draw_combined(scene)
         representation_overlay = draw_representation_overlay(scene)
         representation_debug = draw_representation_debug(scene)
+        representation_masks = draw_representation_masks(scene)
         images = {
             "skeleton": skeleton,
             "parsing": parsing,
@@ -30,6 +32,7 @@ class OpenCVRenderer(Renderer):
             "combined": combined,
             "representation_overlay": representation_overlay,
             "representation_debug": representation_debug,
+            "representation_masks": representation_masks,
         }
         images["summary_panel"] = draw_summary_panel(images)
         return images

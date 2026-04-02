@@ -32,6 +32,7 @@ class BasicSceneBuilder(SceneBuilder):
                 tracked_human=item,
                 frame_index=frame_index,
                 frame_shape=frame.shape[:2],
+                frame=frame,
             )
             for item in tracked
         ]

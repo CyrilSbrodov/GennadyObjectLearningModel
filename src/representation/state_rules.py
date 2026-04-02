@@ -103,26 +103,49 @@ def sanitize_bbox(bbox: tuple[int, int, int, int], shape_hw: tuple[int, int]) ->
 
 
 def infer_relations(garments: dict[str, Garment], body_parts: dict[str, BodyPart]) -> list[RelationEdge]:
-    """Создает базовый набор отношений между одеждой и частями тела."""
+    """Создает набор отношений с учетом надежности и подавления сущностей."""
     relations: list[RelationEdge] = []
     upper_id: str | None = None
     outer_id: str | None = None
+
     for garment_id, garment in garments.items():
-        if not _has_pixels(garment.region):
+        if not _has_pixels(garment.region) or garment.suppressed_from_relations:
             continue
+        if garment.reliability_score < 0.33:
+            continue
+
         garment_type = garment.garment_type
         if garment_type == "upper_inner":
             upper_id = garment_id
-        if garment_type == "outerwear":
+        if garment_type == "outerwear" and garment.is_outer_layer_candidate:
             outer_id = garment_id
+
         for part_id in garment.attached_body_parts:
             part = body_parts.get(part_id)
             if part is None or not _has_pixels(part.region):
                 continue
-            relations.append(RelationEdge(garment_id, part_id, "attached_to", _attachment_confidence(part_id)))
+            if part.suppressed_from_relations or part.reliability_score < 0.33:
+                continue
+
+            confidence = min(
+                0.98,
+                _attachment_confidence(part_id) * (0.65 + 0.35 * garment.reliability_score) * (0.65 + 0.35 * part.reliability_score),
+            )
+            relations.append(RelationEdge(garment_id, part_id, "attached_to", float(confidence)))
 
     if upper_id and outer_id:
-        relations.append(RelationEdge(source_id=outer_id, target_id=upper_id, relation_type="covers", confidence=0.7))
+        upper = garments.get(upper_id)
+        outer = garments.get(outer_id)
+        if upper is not None and outer is not None:
+            if (
+                "inner_visible_under_outer_candidate" in upper.evidence_sources
+                and outer.reliability_score >= 0.42
+                and upper.reliability_score >= 0.36
+            ):
+                covers_confidence = 0.55 + 0.25 * min(outer.reliability_score, upper.reliability_score)
+                relations.append(
+                    RelationEdge(source_id=outer_id, target_id=upper_id, relation_type="covers", confidence=float(min(0.92, covers_confidence)))
+                )
     return relations
 
 
