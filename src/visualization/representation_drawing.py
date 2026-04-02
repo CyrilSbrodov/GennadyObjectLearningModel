@@ -5,19 +5,33 @@ import numpy as np
 
 from src.models.schemas import SceneFrame
 
-
 PART_COLORS: dict[str, tuple[int, int, int]] = {
     "head": (0, 220, 220),
+    "head_core": (0, 190, 235),
     "face": (0, 180, 255),
     "hair": (60, 120, 255),
+    "neck": (0, 240, 180),
     "torso": (0, 255, 140),
     "left_arm": (90, 210, 255),
-    "right_arm": (90, 210, 255),
+    "right_arm": (90, 180, 235),
     "left_leg": (210, 190, 90),
-    "right_leg": (210, 190, 90),
+    "right_leg": (180, 160, 70),
     "left_foot": (255, 180, 120),
-    "right_foot": (255, 180, 120),
-    "neck": (0, 240, 180),
+    "right_foot": (230, 160, 110),
+    "chest_left": (255, 50, 200),
+    "chest_right": (225, 45, 175),
+    "abdomen": (255, 145, 0),
+    "pelvis": (190, 120, 40),
+    "left_upper_arm": (255, 230, 110),
+    "right_upper_arm": (230, 210, 95),
+    "left_forearm": (255, 245, 130),
+    "right_forearm": (235, 225, 110),
+    "left_thigh": (255, 100, 100),
+    "right_thigh": (235, 90, 90),
+    "left_knee": (255, 130, 120),
+    "right_knee": (235, 110, 100),
+    "left_calf": (255, 160, 140),
+    "right_calf": (240, 145, 125),
 }
 
 GARMENT_COLORS: dict[str, tuple[int, int, int]] = {
@@ -26,6 +40,8 @@ GARMENT_COLORS: dict[str, tuple[int, int, int]] = {
     "pants": (120, 200, 40),
     "shoes": (255, 100, 100),
 }
+
+COARSE_PARTS = {"torso", "left_arm", "right_arm", "left_leg", "right_leg", "head", "neck"}
 
 
 def draw_representation_overlay(scene: SceneFrame) -> np.ndarray:
@@ -45,56 +61,56 @@ def draw_representation_overlay(scene: SceneFrame) -> np.ndarray:
 
         points: dict[str, tuple[int, int]] = {}
         for part in rep.body_parts.values():
-            if part.suppressed_from_overlay:
-                continue
             center = _region_center(part.region.mask if part.region is not None else None)
             if center is None:
                 continue
             points[part.part_id] = center
-            cv2.circle(canvas, center, 2, (0, 255, 255), -1)
+            marker_color = (0, 255, 255) if not part.suppressed_from_overlay else (90, 90, 90)
+            cv2.circle(canvas, center, 2, marker_color, -1)
 
         for garment in rep.garments.values():
-            if garment.suppressed_from_overlay:
-                continue
             center = _region_center(garment.region.mask if garment.region is not None else None)
             if center is None:
                 continue
             points[garment.garment_id] = center
-            cv2.circle(canvas, center, 2, (255, 200, 0), -1)
+            marker_color = (255, 200, 0) if not garment.suppressed_from_overlay else (90, 90, 90)
+            cv2.circle(canvas, center, 2, marker_color, -1)
 
         priority_parts = ("head", "torso", "left_arm", "right_arm", "left_leg", "right_leg", "left_foot", "right_foot")
         label_y = y1 + 14
         for part_id in priority_parts:
             part = rep.body_parts.get(part_id)
-            if part is None or part.region is None or part.suppressed_from_overlay:
+            if part is None or part.region is None:
                 continue
             if label_y > y2 - 10:
                 break
+            color = (0, 255, 255) if not part.suppressed_from_overlay else (130, 130, 130)
             cv2.putText(
                 canvas,
                 f"{part.name}:{part.reliability[0]}{part.reliability_score:.2f}",
                 (x1 + 4, label_y),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.32,
-                (0, 255, 255),
+                color,
                 1,
             )
             label_y += 11
 
         garment_label_y = y1 + 14
         for garment in sorted(rep.garments.values(), key=lambda item: item.reliability_score, reverse=True):
-            if garment.region is None or garment.suppressed_from_overlay:
+            if garment.region is None:
                 continue
             if garment_label_y > y2 - 10:
                 break
             suffix = "*" if garment.garment_type == "outerwear" else ""
+            color = (255, 200, 0) if not garment.suppressed_from_overlay else (130, 130, 130)
             cv2.putText(
                 canvas,
                 f"{garment.garment_type}{suffix}:{garment.reliability[0]}{garment.reliability_score:.2f}",
                 (x2 - 145, garment_label_y),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.32,
-                (255, 200, 0),
+                color,
                 1,
             )
             garment_label_y += 11
@@ -102,9 +118,7 @@ def draw_representation_overlay(scene: SceneFrame) -> np.ndarray:
         for edge in rep.relations:
             start = points.get(edge.source_id)
             end = points.get(edge.target_id)
-            if start is None or end is None:
-                continue
-            if _point_distance(start, end) < 14:
+            if start is None or end is None or _point_distance(start, end) < 14:
                 continue
             cv2.line(canvas, start, end, (120, 120, 255), 1)
 
@@ -115,7 +129,7 @@ def draw_representation_debug(scene: SceneFrame) -> np.ndarray:
     """Строит debug-кадр с текстовой панелью по сущностям representation."""
     frame = scene.frame.copy()
     h, w = frame.shape[:2]
-    panel_w = max(480, w // 2)
+    panel_w = max(520, w // 2)
     panel = np.full((h, panel_w, 3), 30, dtype=np.uint8)
 
     y = 24
@@ -166,54 +180,80 @@ def draw_representation_debug(scene: SceneFrame) -> np.ndarray:
 
 
 def draw_representation_masks(scene: SceneFrame) -> np.ndarray:
-    """Рисует семантические маски person/body_parts/garments с легендой."""
+    """Совместимый рендер масок representation (эквивалент normalized)."""
+    return draw_representation_masks_normalized(scene)
+
+
+def draw_representation_masks_raw(scene: SceneFrame) -> np.ndarray:
+    """Рисует raw body-part маски (fine-grained, включая подавленные бледно)."""
     canvas = scene.frame.copy()
     for rep in scene.human_representations:
         if rep.person_mask is not None:
-            _blend_person_mask(canvas, rep.person_mask.mask, (80, 80, 80), alpha=0.12)
-
+            _blend_person_mask(canvas, rep.person_mask.mask, (80, 80, 80), alpha=0.1)
         for part in rep.body_parts.values():
-            if part.region is None or part.suppressed_from_overlay:
+            if part.region is None:
                 continue
             color = PART_COLORS.get(part.name, (120, 120, 120))
-            _blend_person_mask(canvas, part.region.mask, color, alpha=0.24)
+            alpha = 0.18 if part.suppressed_from_overlay else 0.28
+            _blend_person_mask(canvas, part.region.mask, color, alpha=alpha)
             _draw_contours(canvas, part.region.mask, color)
+    return _draw_masks_legend(canvas, mode="raw")
 
+
+def draw_representation_masks_normalized(scene: SceneFrame) -> np.ndarray:
+    """Рисует нормализованные coarse body parts для reasoning-слоя."""
+    canvas = scene.frame.copy()
+    for rep in scene.human_representations:
+        if rep.person_mask is not None:
+            _blend_person_mask(canvas, rep.person_mask.mask, (80, 80, 80), alpha=0.08)
+        for part in rep.body_parts.values():
+            if part.region is None or part.name not in COARSE_PARTS:
+                continue
+            color = PART_COLORS.get(part.name, (120, 120, 120))
+            alpha = 0.16 if part.suppressed_from_overlay else 0.32
+            _blend_person_mask(canvas, part.region.mask, color, alpha=alpha)
+            _draw_contours(canvas, part.region.mask, color)
+    return _draw_masks_legend(canvas, mode="normalized")
+
+
+def draw_representation_masks_garments(scene: SceneFrame) -> np.ndarray:
+    """Рисует garment-семантику и слои верхней одежды."""
+    canvas = scene.frame.copy()
+    for rep in scene.human_representations:
         for garment in rep.garments.values():
-            if garment.region is None or garment.suppressed_from_overlay:
+            if garment.region is None:
                 continue
             color = GARMENT_COLORS.get(garment.garment_type, (200, 200, 200))
-            _blend_person_mask(canvas, garment.region.mask, color, alpha=0.32)
+            alpha = 0.18 if garment.suppressed_from_overlay else 0.36
+            _blend_person_mask(canvas, garment.region.mask, color, alpha=alpha)
             _draw_contours(canvas, garment.region.mask, color)
 
-    return _draw_masks_legend(canvas)
+            center = _region_center(garment.region.mask)
+            if center is not None:
+                label = f"{garment.garment_type} {garment.reliability_score:.2f}"
+                cv2.putText(canvas, label, center, cv2.FONT_HERSHEY_SIMPLEX, 0.36, (250, 250, 250), 1)
+    return _draw_masks_legend(canvas, mode="garments")
 
 
 def draw_summary_panel(images: dict[str, np.ndarray]) -> np.ndarray:
-    """Собирает контакт-лист ключевых визуализаций без агрессивного сжатия debug-панели."""
+    """Собирает информативный summary_panel для anatomy и legacy режимов."""
     base = images.get("combined")
     if base is None:
         raise ValueError("Для summary_panel требуется изображение combined")
 
     h, w = base.shape[:2]
-    detection = _fit_with_padding(images.get("detection", base), (w, h))
-    parsing = _fit_with_padding(images.get("parsing", base), (w, h))
-    combined = _fit_with_padding(base, (w, h))
-    overlay = _fit_with_padding(images.get("representation_overlay", base), (w, h))
-    masks = _fit_with_padding(images.get("representation_masks", base), (w, h))
-
-    debug_full = images.get("representation_debug", base)
-    debug_preview = _debug_preview(debug_full, (w, h), frame_width=w)
-
     tiles = [
-        _draw_tile_caption(detection, "detection"),
-        _draw_tile_caption(parsing, "parsing"),
-        _draw_tile_caption(combined, "combined"),
-        _draw_tile_caption(overlay, "representation_overlay"),
-        _draw_tile_caption(masks, "representation_masks"),
-        _draw_tile_caption(debug_preview, "representation_debug_preview"),
+        _draw_tile_caption(_fit_with_padding(images.get("detection", base), (w, h)), "detection"),
+        _draw_tile_caption(_fit_with_padding(images.get("parsing", base), (w, h)), "parsing"),
+        _draw_tile_caption(_fit_with_padding(images.get("anatomy_raw_overlay", images.get("parsing", base)), (w, h)), "anatomy_raw_overlay"),
+        _draw_tile_caption(_fit_with_padding(images.get("representation_masks_raw", base), (w, h)), "representation_masks_raw"),
+        _draw_tile_caption(_fit_with_padding(images.get("representation_masks_normalized", base), (w, h)), "representation_masks_normalized"),
+        _draw_tile_caption(_fit_with_padding(images.get("representation_masks_garments", base), (w, h)), "representation_masks_garments"),
+        _draw_tile_caption(_fit_with_padding(images.get("representation_overlay", base), (w, h)), "representation_overlay"),
+        _draw_tile_caption(_fit_with_padding(base, (w, h)), "combined"),
+        _draw_tile_caption(_debug_preview(images.get("representation_debug", base), (w, h), frame_width=w), "representation_debug_preview"),
     ]
-    return np.vstack([np.hstack(tiles[:3]), np.hstack(tiles[3:6])])
+    return np.vstack([np.hstack(tiles[0:3]), np.hstack(tiles[3:6]), np.hstack(tiles[6:9])])
 
 
 def _draw_tile_caption(image: np.ndarray, title: str) -> np.ndarray:
@@ -262,19 +302,30 @@ def _debug_preview(debug_image: np.ndarray, target_wh: tuple[int, int], frame_wi
     return np.hstack([left_small, right_small])
 
 
-def _draw_masks_legend(canvas: np.ndarray) -> np.ndarray:
-    """Рисует компактную легенду семантических масок."""
+def _draw_masks_legend(canvas: np.ndarray, mode: str) -> np.ndarray:
+    """Рисует легенду семантических масок под конкретный режим."""
     legend = canvas.copy()
-    items = [
-        ("person_mask", (80, 80, 80)),
-        ("torso", PART_COLORS["torso"]),
-        ("head", PART_COLORS["head"]),
-        ("arms", PART_COLORS["left_arm"]),
-        ("outerwear", GARMENT_COLORS["outerwear"]),
-        ("upper_inner", GARMENT_COLORS["upper_inner"]),
-        ("pants", GARMENT_COLORS["pants"]),
-        ("shoes", GARMENT_COLORS["shoes"]),
-    ]
+    items = {
+        "raw": [
+            ("person_mask", (80, 80, 80)),
+            ("fine anatomy", PART_COLORS["chest_left"]),
+            ("coarse anatomy", PART_COLORS["torso"]),
+            ("suppressed=fade", (100, 100, 100)),
+        ],
+        "normalized": [
+            ("torso", PART_COLORS["torso"]),
+            ("head", PART_COLORS["head"]),
+            ("arms", PART_COLORS["left_arm"]),
+            ("legs", PART_COLORS["left_leg"]),
+        ],
+        "garments": [
+            ("outerwear", GARMENT_COLORS["outerwear"]),
+            ("upper_inner", GARMENT_COLORS["upper_inner"]),
+            ("pants", GARMENT_COLORS["pants"]),
+            ("shoes", GARMENT_COLORS["shoes"]),
+        ],
+    }.get(mode, [])
+
     x, y = 12, 16
     for label, color in items:
         cv2.rectangle(legend, (x, y - 10), (x + 12, y + 2), color, -1)
@@ -301,7 +352,7 @@ def _region_center(mask: np.ndarray | None) -> tuple[int, int] | None:
 
 
 def _blend_person_mask(canvas: np.ndarray, mask: np.ndarray | None, color: tuple[int, int, int], alpha: float) -> None:
-    """Полупрозрачно подсвечивает person_mask без захламления кадра."""
+    """Полупрозрачно подсвечивает маску без захламления кадра."""
     if mask is None or np.count_nonzero(mask) == 0:
         return
     overlay = np.zeros_like(canvas)

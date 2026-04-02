@@ -140,6 +140,9 @@ class SimpleTracker(Tracker):
             )
         if parsed_propagated is None:
             return parsed_new
+        if parsed_new.schema_version != parsed_propagated.schema_version:
+            # Для несовместимых label-space выбираем свежий парсинг без агрессивного смешивания.
+            return parsed_new
 
         fused_masks: dict[str, np.ndarray] = {}
         labels = set(parsed_new.masks) | set(parsed_propagated.masks)

@@ -160,6 +160,10 @@ def _attachment_confidence(part_id: str) -> float:
     """Возвращает базовую уверенность связи attached_to для части тела."""
     if "foot" in part_id:
         return 0.79
+    if "thigh" in part_id or "pelvis" in part_id:
+        return 0.81
+    if "upper_arm" in part_id or "forearm" in part_id:
+        return 0.76
     if "arm" in part_id:
         return 0.74
     return 0.82
