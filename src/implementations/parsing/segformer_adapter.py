@@ -27,13 +27,14 @@ class SegFormerAdapter:
             return "cuda"
         return "cpu"
 
-    def infer_roi(self, roi: np.ndarray) -> np.ndarray:
-        """Возвращает карту id классов для ROI."""
-        resized = cv2.resize(roi, (self.parsing_size, self.parsing_size), interpolation=cv2.INTER_LINEAR)
+    def infer_frame(self, frame: np.ndarray) -> np.ndarray:
+        """Возвращает карту id классов для всего кадра, чтобы запускать модель только один раз."""
+        src_h, src_w = frame.shape[:2]
+        resized = cv2.resize(frame, (self.parsing_size, self.parsing_size), interpolation=cv2.INTER_LINEAR)
         rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
         inputs = self.processor(images=rgb, return_tensors="pt")
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
         with torch.no_grad():
             logits = self.model(**inputs).logits
         pred = torch.argmax(logits, dim=1)[0].detach().cpu().numpy().astype(np.uint8)
-        return pred
+        return cv2.resize(pred, (src_w, src_h), interpolation=cv2.INTER_NEAREST)

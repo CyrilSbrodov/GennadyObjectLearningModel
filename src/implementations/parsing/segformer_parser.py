@@ -3,9 +3,9 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
+from src.implementations.parsing.segformer_adapter import MODEL_NAME, SegFormerAdapter
 from src.interfaces.contracts import HumanParser
 from src.models.schemas import Detection, PARSING_LABELS, ParsedHuman
-from src.implementations.parsing.segformer_adapter import MODEL_NAME, SegFormerAdapter
 
 
 class SegFormerParser(HumanParser):
@@ -25,16 +25,24 @@ class SegFormerParser(HumanParser):
             "right_leg": {"right-leg", "right_leg", "right-shoe", "right_shoe", "socks"},
             "shoes": {"left-shoe", "left_shoe", "right-shoe", "right_shoe", "shoes"},
         }
+        self.canonical_ids = {
+            label: np.array(sorted(self._mapped_ids(label)), dtype=np.uint8) for label in PARSING_LABELS
+        }
 
     def parse(self, frame: np.ndarray, detections: list[Detection]) -> list[ParsedHuman]:
-        """Запускает парсинг внутри ROI человека."""
+        """Запускает SegFormer один раз на весь кадр и режет маски по детекциям."""
+        if not detections:
+            return []
+
+        pred = self.adapter.infer_frame(frame)
         parsed_list: list[ParsedHuman] = []
+        frame_h, frame_w = frame.shape[:2]
+
         for idx, det in enumerate(detections):
             x1, y1, x2, y2 = det.bbox
             x1, y1 = max(0, x1), max(0, y1)
-            x2, y2 = min(frame.shape[1], x2), min(frame.shape[0], y2)
-            roi = frame[y1:y2, x1:x2]
-            if roi.size == 0:
+            x2, y2 = min(frame_w, x2), min(frame_h, y2)
+            if x2 <= x1 or y2 <= y1:
                 parsed_list.append(
                     ParsedHuman(
                         detection_idx=idx,
@@ -45,19 +53,21 @@ class SegFormerParser(HumanParser):
                 )
                 continue
 
-            pred = self.adapter.infer_roi(roi)
-            pred = cv2.resize(pred, (x2 - x1, y2 - y1), interpolation=cv2.INTER_NEAREST)
-
+            roi_pred = pred[y1:y2, x1:x2]
             masks = self._empty_masks(frame.shape[:2])
+            human_pixels = int((roi_pred > 0).sum())
             canonical_pixels = 0
-            human_pixels = int((pred > 0).sum())
+
             for canonical_label in PARSING_LABELS:
-                mapped_ids = self._mapped_ids(canonical_label)
-                local_mask = np.isin(pred, list(mapped_ids)).astype(np.uint8)
+                ids = self.canonical_ids[canonical_label]
+                if ids.size == 0:
+                    local_mask = np.zeros_like(roi_pred, dtype=np.uint8)
+                else:
+                    # Векторная операция нужна, чтобы убрать дорогие циклы по каждому пикселю.
+                    local_mask = np.isin(roi_pred, ids).astype(np.uint8)
                 canonical_pixels += int(local_mask.sum())
-                full_mask = np.zeros(frame.shape[:2], dtype=np.uint8)
-                full_mask[y1:y2, x1:x2] = local_mask
-                masks[canonical_label] = full_mask
+                masks[canonical_label][y1:y2, x1:x2] = local_mask
+
             confidence = float(canonical_pixels / max(1, human_pixels)) if human_pixels > 0 else 0.0
             parsed_list.append(
                 ParsedHuman(

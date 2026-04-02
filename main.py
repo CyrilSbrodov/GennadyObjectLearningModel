@@ -18,7 +18,7 @@ from src.implementations.scene.basic_scene_builder import BasicSceneBuilder
 from src.implementations.tracking.simple_tracker import SimpleTracker
 from src.io.input_loader import collect_inputs
 from src.io.output_writer import OutputWriter
-from src.orchestrator.pipeline import PipelineOrchestrator
+from src.orchestrator.pipeline import FastPipeline, PipelineOrchestrator, SegmentationWorker
 
 
 def parse_args() -> argparse.Namespace:
@@ -59,9 +59,8 @@ def main() -> None:
         parser = SegFormerParser(device=config.device)
 
     orchestrator = PipelineOrchestrator(
-        detector=detector,
-        pose_extractor=pose_extractor,
-        parser=parser,
+        fast_pipeline=FastPipeline(detector=detector, pose_extractor=pose_extractor),
+        segmentation_worker=SegmentationWorker(parser=parser),
         tracker=SimpleTracker(),
         scene_builder=BasicSceneBuilder(),
         renderer=OpenCVRenderer(),
@@ -69,15 +68,19 @@ def main() -> None:
         parsing_interval=config.parsing_interval,
     )
 
-    photos, videos = collect_inputs(config.input_photo_dir, config.input_video_dir)
-    for photo in photos:
-        image = cv2.imread(str(photo))
-        if image is None:
-            continue
-        orchestrator.process_image(image, photo.stem)
+    try:
+        photos, videos = collect_inputs(config.input_photo_dir, config.input_video_dir)
+        for photo in photos:
+            image = cv2.imread(str(photo))
+            if image is None:
+                continue
+            orchestrator.process_image(image, photo.stem)
 
-    for video in videos:
-        orchestrator.process_video(str(video), video.stem)
+        for video in videos:
+            orchestrator.process_video(str(video), video.stem)
+    finally:
+        # Явно останавливаем воркер, чтобы не терять хвост очереди при завершении.
+        orchestrator.close()
 
 
 if __name__ == "__main__":
